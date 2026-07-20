@@ -1,0 +1,1538 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AssetManager Premium</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        :root { --bg-app: #FAFAFA; }
+        body { font-family: 'Inter', sans-serif; background-color: var(--bg-app); -webkit-tap-highlight-color: transparent; }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        .loader { border: 2px solid rgba(0,0,0,0.05); border-top: 2px solid #0f172a; border-radius: 50%; width: 24px; height: 24px; animation: spin 0.8s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .fade-in { animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        .slide-up { animation: slideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        input, textarea, select { transition: all 0.2s ease; }
+        .hide-scroll::-webkit-scrollbar { display: none; }
+        .hide-scroll { -ms-overflow-style: none; scrollbar-width: none; }
+
+        /* ── Zona de drop de portada ── */
+        .cover-drop-zone { transition: border-color 0.2s, background-color 0.2s; }
+        .cover-drop-zone.dragging { border-color: #6366f1 !important; background-color: #eef2ff !important; }
+    </style>
+</head>
+<body class="text-slate-800 antialiased overflow-x-hidden">
+
+    <script>
+        window.GAS_URL = 'https://script.google.com/macros/s/AKfycbyw9UlbGOXYaiXHN1ukoPRkDbTEp3psBiTwwY6wXp3VpZNAEa_XwREEwPUMCU1yYeiRhQ/exec';
+    </script>
+
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback } = React;
+
+        // =============================================================
+        //  HELPER: procesar imagen igual que VitrinaDocsPage
+        //  FileReader → <img> → Canvas (max 800px) → toDataURL jpeg 0.7
+        // =============================================================
+        function processImageFile(file) {
+            return new Promise((resolve, reject) => {
+                if (!file || !file.type.startsWith('image/')) {
+                    return reject(new Error('No es imagen'));
+                }
+                const reader = new FileReader();
+                reader.onerror = () => reject(new Error('Error leyendo archivo'));
+                reader.onload = (e) => {
+                    const img = new window.Image();
+                    img.onerror = () => reject(new Error('Error cargando imagen'));
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        let width = img.width, height = img.height;
+                        // Redimensionar a máximo 800px manteniendo proporción
+                        if (width > height) {
+                            if (width > 800) { height = Math.round(height * 800 / width); width = 800; }
+                        } else {
+                            if (height > 800) { width = Math.round(width * 800 / height); height = 800; }
+                        }
+                        canvas.width  = width;
+                        canvas.height = height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, width, height);
+                        resolve(canvas.toDataURL('image/jpeg', 0.7));
+                    };
+                    img.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        // Procesar múltiples archivos, ignorar los que no son imagen
+        async function processImageFiles(files, currentCount = 0, limit = 12) {
+            const validFiles = Array.from(files).filter(f => f && f.type.startsWith('image/'));
+            if (!validFiles.length) return [];
+            if (validFiles.length + currentCount > limit) {
+                alert(`Máximo ${limit} imágenes.`);
+                return [];
+            }
+            const results = await Promise.all(validFiles.map(f => processImageFile(f).catch(() => null)));
+            return results.filter(Boolean);
+        }
+
+        // =============================================================
+        //  API HELPERS
+        // =============================================================
+        async function apiCargar() {
+            const url = window.GAS_URL + '?action=cargar&t=' + Date.now();
+            const res  = await fetch(url);
+            const json = await res.json();
+            return json.data || [];
+        }
+
+        async function apiGuardar(proyectos) {
+            await fetch(window.GAS_URL, {
+                method:  'POST',
+                mode:    'no-cors',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({ action: 'guardar', data: proyectos })
+            });
+        }
+
+        // =============================================================
+        //  MOCK DATA
+        // =============================================================
+        const MOCK_DATA = [
+            {
+                id: 1,
+                title: "Configuración Nginx Producción",
+                category: "DevOps",
+                status: "Activo",
+                pinned: true,
+                description: "Archivos de configuración del proxy inverso, balanceo de carga y certificados SSL para el entorno de producción principal.",
+                icon: "server",
+                files: [
+                    { name: "nginx.conf", code: "user www-data;\nworker_processes auto;\npid /run/nginx.pid;\ninclude /etc/nginx/modules-enabled/*.conf;\n\nevents {\n\tworker_connections 768;\n}\n\nhttp {\n\tinclude /etc/nginx/mime.types;\n\tdefault_type application/octet-stream;\n\taccess_log /var/log/nginx/access.log;\n}" }
+                ],
+                steps: [ { text: "Verificar sintaxis", sub: "sudo nginx -t" } ],
+                localPaths: [ { label: "Directorio Nginx", path: "/etc/nginx/" } ],
+                images: ["https://images.unsplash.com/photo-1558494949-ef010cbdcc31?q=80&w=500&auto=format&fit=crop"],
+                attachments: []
+            }
+        ];
+
+        // =============================================================
+        //  COMPONENTES
+        // =============================================================
+
+        const Icon = ({ name, className = "" }) => {
+            const map = {
+                'plus': 'fa-plus', 'trash': 'fa-trash', 'copy': 'fa-copy', 'check': 'fa-check',
+                'times': 'fa-xmark', 'file-code': 'fa-file-code', 'folder-open': 'fa-folder-open',
+                'arrow-left': 'fa-arrow-left', 'pencil': 'fa-pen', 'search': 'fa-magnifying-glass',
+                'cloud': 'fa-cloud', 'rocket': 'fa-rocket', 'image': 'fa-image', 'zap': 'fa-bolt',
+                'activity': 'fa-chart-line', 'filter': 'fa-filter', 'chevron-down': 'fa-chevron-down',
+                'chevron-right': 'fa-chevron-right', 'upload': 'fa-cloud-arrow-up', 'server': 'fa-server',
+                'code': 'fa-code', 'database': 'fa-database', 'link': 'fa-link', 'terminal': 'fa-terminal',
+                'paperclip': 'fa-paperclip', 'download': 'fa-download', 'file-pdf': 'fa-file-pdf',
+                'file-zip': 'fa-file-zipper', 'file-alt': 'fa-file-lines', 'star': 'fa-star'
+            };
+            return <i className={`fa-solid ${map[name] || 'fa-folder'} ${className}`}></i>;
+        };
+
+        const StatusBadge = ({ status, dot = true }) => {
+            const configs = {
+                'Activo':        { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200/50', dot: 'bg-emerald-500' },
+                'En Desarrollo': { bg: 'bg-blue-50',    text: 'text-blue-700',    border: 'border-blue-200/50',    dot: 'bg-blue-500'    },
+                'En Pausa':      { bg: 'bg-amber-50',   text: 'text-amber-700',   border: 'border-amber-200/50',   dot: 'bg-amber-500'   },
+                'Archivado':     { bg: 'bg-slate-100',  text: 'text-slate-600',   border: 'border-slate-200',      dot: 'bg-slate-400'   }
+            };
+            const c = configs[status] || configs['Archivado'];
+            return (
+                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold tracking-wide border ${c.bg} ${c.text} ${c.border}`}>
+                    {dot && <span className={`w-1.5 h-1.5 rounded-full ${c.dot}`}></span>}
+                    {status}
+                </span>
+            );
+        };
+
+        const PremiumCopyButton = ({ text, label, isMini = false }) => {
+            const [copied, setCopied] = useState(false);
+            const handleCopy = (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                navigator.clipboard.writeText(text || '').then(() => {
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 2000);
+                }).catch(() => {
+                    const ta = document.createElement('textarea');
+                    ta.value = text || '';
+                    ta.style.position = 'fixed';
+                    ta.style.opacity = '0';
+                    document.body.appendChild(ta);
+                    ta.focus();
+                    ta.select();
+                    try { document.execCommand('copy'); } catch(_) {}
+                    document.body.removeChild(ta);
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 2000);
+                });
+            };
+
+            if (isMini) {
+                return (
+                    <button onClick={handleCopy} className={`flex-shrink-0 flex items-center justify-center w-7 h-7 rounded-lg transition-all ${copied ? 'bg-emerald-100 text-emerald-600 scale-110' : 'bg-slate-100 text-slate-400 hover:bg-indigo-50 hover:text-indigo-600 active:scale-95'}`} title="Copiar">
+                        <Icon name={copied ? "check" : "copy"} className="text-[11px]"/>
+                    </button>
+                );
+            }
+            return (
+                <button onClick={handleCopy} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${copied ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 active:scale-95 shadow-sm'}`}>
+                    <Icon name={copied ? "check" : "copy"} className={copied ? "text-emerald-500" : "text-slate-400"}/>
+                    {copied ? 'Copiado!' : label || 'Copiar'}
+                </button>
+            );
+        };
+
+        // ── Componente de portada: drop + paste + URL + file ──────────
+        const CoverImagePicker = ({ value, onChange }) => {
+            const [isDragging, setIsDragging] = useState(false);
+            const [urlInput, setUrlInput]     = useState('');
+
+            const handleFiles = async (files) => {
+                const file = Array.from(files).find(f => f && f.type.startsWith('image/'));
+                if (!file) return;
+                const b64 = await processImageFile(file);
+                onChange(b64);
+                setUrlInput('');
+            };
+
+            const handleDrop = async (e) => {
+                e.preventDefault();
+                setIsDragging(false);
+                if (e.dataTransfer.files?.length > 0) {
+                    await handleFiles(e.dataTransfer.files);
+                }
+            };
+
+            const handleUrlCommit = () => {
+                const trimmed = urlInput.trim();
+                if (trimmed) { onChange(trimmed); }
+            };
+
+            return (
+                <div className="space-y-3">
+                    {/* Zona de drop / preview */}
+                    <div
+                        className={`cover-drop-zone relative w-full h-48 rounded-2xl border-2 border-dashed overflow-hidden flex flex-col items-center justify-center transition-all cursor-pointer ${isDragging ? 'dragging' : 'border-slate-300 bg-slate-50 hover:bg-slate-100'}`}
+                        onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                        onDragLeave={() => setIsDragging(false)}
+                        onDrop={handleDrop}
+                    >
+                        {value ? (
+                            <>
+                                <img src={value} alt="Portada" className="w-full h-full object-cover opacity-80" />
+                                <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 hover:opacity-100 transition-opacity">
+                                    <button
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); onChange(''); setUrlInput(''); }}
+                                        className="w-10 h-10 bg-red-500/90 backdrop-blur text-white rounded-xl flex items-center justify-center hover:bg-red-600 transition-colors"
+                                    >
+                                        <Icon name="trash" className="text-sm"/>
+                                    </button>
+                                </div>
+                            </>
+                        ) : (
+                            <div className="text-center pointer-events-none select-none p-4">
+                                <Icon name="upload" className={`text-3xl mb-2 mx-auto block ${isDragging ? 'text-indigo-500' : 'text-slate-400'}`}/>
+                                <p className={`text-sm font-bold mb-1 ${isDragging ? 'text-indigo-600' : 'text-slate-500'}`}>
+                                    {isDragging ? 'Suelta la imagen aquí' : 'Arrastra una imagen aquí'}
+                                </p>
+                                <p className="text-[11px] text-slate-400">o usa Ctrl+V para pegar • máx 800px</p>
+                            </div>
+                        )}
+                        {/* Input file invisible sobre toda la zona cuando NO hay imagen */}
+                        {!value && (
+                            <input
+                                type="file"
+                                accept="image/*"
+                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                                onChange={(e) => handleFiles(e.target.files)}
+                            />
+                        )}
+                    </div>
+
+                    {/* Input URL */}
+                    <div className="relative">
+                        <Icon name="image" className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-sm"/>
+                        <input
+                            type="text"
+                            value={urlInput}
+                            onChange={(e) => { setUrlInput(e.target.value); if (!e.target.value.trim()) onChange(''); }}
+                            onBlur={handleUrlCommit}
+                            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleUrlCommit(); } }}
+                            placeholder="O pega una URL de imagen"
+                            className="w-full pl-9 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono text-xs text-slate-600 focus:bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all"
+                        />
+                    </div>
+                    <p className="text-[10px] text-slate-400 font-medium">
+                        <kbd className="bg-slate-100 border border-slate-200 rounded px-1 py-0.5 font-sans">Ctrl+V</kbd> en cualquier parte del formulario para pegar una imagen del portapapeles
+                    </p>
+                </div>
+            );
+        };
+
+        const ToolGridCard = ({ tool, onClick, onDelete, onEdit, onTogglePin }) => {
+            const safeImages      = tool.images || [];
+            // Primera imagen válida = portada
+            const mainImage       = safeImages.find(img => img && img.trim() !== '') || null;
+            const filesCount      = (tool.files || []).length;
+            const pathsCount      = (tool.localPaths || []).length;
+            const attachmentsCount = (tool.attachments || []).length;
+
+            return (
+                <div onClick={onClick} className="bg-white rounded-[24px] shadow-[0_2px_10px_rgb(0,0,0,0.02)] border border-slate-200/60 overflow-hidden cursor-pointer hover:shadow-[0_8px_30px_rgb(0,0,0,0.08)] hover:-translate-y-1 transition-all duration-300 flex flex-col h-full group relative">
+                    <div className="h-40 bg-slate-50 relative overflow-hidden flex items-center justify-center p-2">
+                        {mainImage ? (
+                            <div className="w-full h-full rounded-[16px] overflow-hidden relative">
+                                <img src={mainImage} alt={tool.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"/>
+                                <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                            </div>
+                        ) : (
+                            <div className="w-full h-full rounded-[16px] border border-dashed border-slate-200 bg-slate-50 flex flex-col items-center justify-center text-slate-400 transition-colors group-hover:bg-slate-100">
+                                <Icon name="image" className="text-3xl mb-2 opacity-30" />
+                                <span className="text-[10px] uppercase font-bold tracking-widest opacity-40">No Cover</span>
+                            </div>
+                        )}
+                        <div className="absolute top-4 right-4 flex gap-1 z-10">
+                            <button onClick={(e) => { e.stopPropagation(); onTogglePin(tool.id); }} className={`w-9 h-9 rounded-full flex items-center justify-center shadow-md backdrop-blur-md transition-all ${tool.pinned ? 'bg-amber-400 text-white shadow-amber-400/30 scale-100' : 'bg-white/70 text-slate-500 hover:bg-white hover:text-amber-500 opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100'}`} title={tool.pinned ? "Desfijar" : "Fijar proyecto"}>
+                                <Icon name="star" className="text-sm"/>
+                            </button>
+                            <button onClick={(e) => { e.stopPropagation(); onEdit(tool); }} className="hidden md:flex w-9 h-9 bg-white/80 backdrop-blur-md rounded-full items-center justify-center text-slate-600 hover:text-indigo-600 shadow-sm transition-all opacity-0 group-hover:opacity-100 hover:scale-105">
+                                <Icon name="pencil" className="text-sm"/>
+                            </button>
+                            <button onClick={(e) => { e.stopPropagation(); onDelete(tool.id); }} className="hidden md:flex w-9 h-9 bg-white/80 backdrop-blur-md rounded-full items-center justify-center text-slate-600 hover:text-red-600 shadow-sm transition-all opacity-0 group-hover:opacity-100 hover:scale-105">
+                                <Icon name="trash" className="text-sm"/>
+                            </button>
+                        </div>
+                        <div className="absolute bottom-4 left-4 w-10 h-10 bg-white/90 backdrop-blur-md rounded-xl shadow-sm border border-white flex items-center justify-center text-slate-700 z-10">
+                            <Icon name={tool.icon || 'folder-open'} className="text-lg" />
+                        </div>
+                    </div>
+                    <div className="p-5 flex-1 flex flex-col">
+                        <div className="mb-3 flex items-center gap-2">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{tool.category || 'General'}</span>
+                            <div className="flex-1"></div>
+                            <StatusBadge status={tool.status} />
+                        </div>
+                        <h3 className="font-bold text-[17px] text-slate-900 mb-2 leading-tight tracking-tight group-hover:text-indigo-600 transition-colors">{tool.title}</h3>
+                        <p className="text-slate-500 text-[13px] line-clamp-2 mb-5 flex-1 leading-relaxed">{tool.description}</p>
+                        <div className="pt-4 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400 font-semibold">
+                            <div className="flex gap-3.5">
+                                <span className="flex items-center gap-1.5"><Icon name="file-code" className="text-slate-300"/> {filesCount}</span>
+                                <span className="flex items-center gap-1.5"><Icon name="link" className="text-slate-300"/> {pathsCount}</span>
+                                {(attachmentsCount > 0 || safeImages.length > 0) && (
+                                    <span className="flex items-center gap-1.5"><Icon name="paperclip" className="text-slate-300"/> {attachmentsCount + safeImages.length}</span>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const FileViewer = ({ file, defaultOpen = true }) => {
+            const [isOpen, setIsOpen] = useState(defaultOpen);
+            return (
+                <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white mb-4 shadow-sm transition-all duration-300">
+                    <div className="p-3 md:p-4 flex justify-between items-center cursor-pointer hover:bg-slate-50 transition-colors" onClick={() => setIsOpen(!isOpen)}>
+                        <div className="flex items-center gap-3 overflow-hidden">
+                            <div className={`w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center flex-shrink-0 transition-transform duration-300 ${isOpen ? 'rotate-90' : ''}`}>
+                                <Icon name="chevron-right" className="text-[10px] text-slate-500"/>
+                            </div>
+                            <Icon name="file-code" className="text-indigo-500 text-sm flex-shrink-0"/>
+                            <span className="font-mono text-sm font-semibold text-slate-700 truncate">{file.name}</span>
+                        </div>
+                        <div className="flex-shrink-0 ml-2">
+                            <PremiumCopyButton text={file.code} isMini={true} />
+                        </div>
+                    </div>
+                    {isOpen && (
+                        <div className="p-4 md:p-5 bg-slate-900 border-t border-slate-100">
+                            <pre className="font-mono text-[13px] text-slate-300 leading-relaxed whitespace-pre-wrap overflow-x-auto hide-scroll">{file.code}</pre>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const ProjectDetailView = ({ tool, onDelete, onEdit, onBack, onTogglePin }) => {
+            const safeSteps       = tool.steps       || [];
+            const safeFiles       = tool.files       || [];
+            const safeImages      = tool.images      || [];
+            const safePaths       = tool.localPaths  || [];
+            const safeAttachments = tool.attachments || [];
+
+            return (
+                <div className="slide-up max-w-5xl mx-auto pb-24 md:pb-12">
+                    <div className="sticky top-0 md:relative z-40 bg-white/80 md:bg-transparent backdrop-blur-xl md:backdrop-blur-none border-b md:border-none border-slate-200 px-4 py-3 md:px-0 md:py-0 flex items-center justify-between mb-0 md:mb-6 -mx-4 md:mx-0">
+                        <button onClick={onBack} className="flex items-center gap-2 text-slate-500 hover:text-slate-900 font-semibold transition-colors text-sm py-2">
+                            <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center"><Icon name="arrow-left" className="text-xs"/></div>
+                            <span className="hidden sm:inline">Volver</span>
+                        </button>
+                        <div className="flex gap-2">
+                            <button onClick={() => onTogglePin(tool.id)} className={`w-10 h-10 md:w-auto md:px-4 md:py-2 rounded-full md:rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-all ${tool.pinned ? 'bg-amber-100 text-amber-600' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 shadow-sm'}`}>
+                                <Icon name="star"/> <span className="hidden md:inline">{tool.pinned ? 'Desfijar' : 'Fijar'}</span>
+                            </button>
+                            <div className="hidden md:flex gap-2">
+                                <button onClick={() => onEdit(tool)} className="px-4 py-2 bg-white border border-slate-200 text-slate-700 rounded-xl text-sm font-semibold hover:bg-slate-50 flex items-center gap-2 shadow-sm active:scale-95 transition-all"><Icon name="pencil"/> Editar</button>
+                                <button onClick={() => onDelete(tool.id)} className="px-4 py-2 bg-white border border-red-200 text-red-600 rounded-xl text-sm font-semibold hover:bg-red-50 flex items-center gap-2 shadow-sm active:scale-95 transition-all"><Icon name="trash"/> Eliminar</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="bg-white md:rounded-[32px] md:shadow-[0_8px_30px_rgb(0,0,0,0.04)] md:border border-slate-200/60 overflow-hidden mt-4 md:mt-0">
+                        <div className="p-6 md:p-10 bg-gradient-to-b from-slate-50 to-white flex flex-col md:flex-row gap-6 md:items-start border-b border-slate-100">
+                            <div className="w-16 h-16 md:w-20 md:h-20 rounded-2xl bg-white border border-slate-200 flex items-center justify-center text-3xl text-slate-400 shadow-sm flex-shrink-0">
+                                <Icon name={tool.icon || 'folder'} />
+                            </div>
+                            <div className="flex-1">
+                                <div className="flex items-center gap-3 mb-3">
+                                    <span className="text-[11px] font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-md uppercase tracking-widest">{tool.category}</span>
+                                    <StatusBadge status={tool.status} />
+                                </div>
+                                <h1 className="text-2xl md:text-4xl font-extrabold text-slate-900 mb-3 tracking-tight">{tool.title}</h1>
+                                <p className="text-slate-500 text-sm md:text-base leading-relaxed max-w-3xl">{tool.description}</p>
+                            </div>
+                        </div>
+
+                        <div className="flex flex-col lg:flex-row">
+                            <div className="w-full lg:w-1/3 p-6 md:p-8 bg-slate-50/50 border-r border-slate-100 space-y-8">
+                                {safePaths.length > 0 && (
+                                    <section>
+                                        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2"><Icon name="link"/> Accesos Locales</h3>
+                                        <div className="space-y-3">
+                                            {safePaths.map((p, idx) => (
+                                                <div key={idx} className="bg-white p-3 md:p-4 rounded-2xl border border-slate-200/60 shadow-sm flex flex-col gap-2 group">
+                                                    <div className="flex justify-between items-center">
+                                                        <span className="text-sm font-semibold text-slate-800">{p.label}</span>
+                                                        <div className="md:opacity-0 group-hover:opacity-100 transition-opacity"><PremiumCopyButton text={p.path} isMini={true} /></div>
+                                                    </div>
+                                                    <div className="bg-slate-50 px-3 py-2 rounded-xl border border-slate-100 overflow-hidden">
+                                                        <code className="text-xs font-mono text-slate-500 whitespace-nowrap overflow-hidden text-ellipsis block" title={p.path}>{p.path}</code>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </section>
+                                )}
+                                {safeSteps.length > 0 && (
+                                    <section>
+                                        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-5 flex items-center gap-2"><Icon name="terminal"/> Flujo de Trabajo</h3>
+                                        <div className="relative border-l-2 border-slate-200 pl-5 space-y-6 ml-2">
+                                            {safeSteps.map((step, idx) => (
+                                                <div key={idx} className="relative">
+                                                    <div className="absolute -left-[27px] top-1 w-3 h-3 rounded-full bg-white border-2 border-slate-300"></div>
+                                                    <h4 className="font-semibold text-slate-800 text-sm mb-2">{step.text}</h4>
+                                                    {step.sub && (
+                                                        <div className="flex items-center justify-between bg-slate-800 rounded-xl px-3 py-2.5 group">
+                                                            <code className="text-[11px] font-mono text-emerald-400 overflow-hidden text-ellipsis whitespace-nowrap mr-2">{step.sub}</code>
+                                                            <PremiumCopyButton text={step.sub} isMini={true} />
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </section>
+                                )}
+                            </div>
+
+                            <div className="w-full lg:w-2/3 p-6 md:p-10">
+                                <section className="mb-10">
+                                    <div className="flex items-center justify-between mb-5">
+                                        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2"><Icon name="file-code"/> Código Fuente</h3>
+                                        <span className="text-[11px] font-semibold text-slate-400 bg-slate-100 px-2 py-1 rounded-md">{safeFiles.length} fragmentos</span>
+                                    </div>
+                                    <div className="space-y-4">
+                                        {safeFiles.map((file, idx) => <FileViewer key={idx} file={file} defaultOpen={idx === 0} />)}
+                                    </div>
+                                </section>
+
+                                {safeAttachments.length > 0 && (
+                                    <section className="mb-10 border-t border-slate-200 pt-8">
+                                        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-5 flex items-center gap-2"><Icon name="paperclip"/> Archivos y Carpetas Adjuntas</h3>
+                                        <div className="grid sm:grid-cols-2 gap-3 max-h-80 overflow-y-auto custom-scrollbar pr-2">
+                                            {safeAttachments.map((att, idx) => (
+                                                <div key={idx} className="bg-white border border-slate-200/60 rounded-2xl p-3 flex items-center justify-between shadow-[0_2px_8px_rgb(0,0,0,0.02)] hover:border-indigo-200 hover:shadow-md transition-all group">
+                                                    <div className="flex items-center gap-3 overflow-hidden">
+                                                        <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center flex-shrink-0">
+                                                            <Icon name={att.type && att.type.includes('pdf') ? 'file-pdf' : att.type && att.type.includes('zip') ? 'file-zip' : 'file-alt'} className="text-lg"/>
+                                                        </div>
+                                                        <div className="overflow-hidden">
+                                                            <div className="flex items-center gap-2 mb-0.5">
+                                                                <p className="text-sm font-bold text-slate-800 truncate" title={att.path || att.name}>{att.path || att.name}</p>
+                                                                <PremiumCopyButton text={att.path || att.name} isMini={true} />
+                                                            </div>
+                                                            <p className="text-[11px] text-slate-500 font-medium">{(att.size / 1024 / 1024).toFixed(2)} MB</p>
+                                                        </div>
+                                                    </div>
+                                                    <a href={att.data} download={att.name} className="w-8 h-8 rounded-xl bg-slate-50 hover:bg-indigo-600 hover:text-white text-slate-400 flex items-center justify-center transition-colors flex-shrink-0 active:scale-95" title="Descargar">
+                                                        <Icon name="download" className="text-xs"/>
+                                                    </a>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </section>
+                                )}
+
+                                {safeImages.length > 0 && (
+                                    <section className="border-t border-slate-200 pt-8">
+                                        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-5 flex items-center gap-2"><Icon name="image"/> Galería Visual</h3>
+                                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                                            {safeImages.filter(i => i).map((img, idx) => (
+                                                <a href={img} target="_blank" key={idx} className="block aspect-square bg-slate-100 border border-slate-200/60 rounded-2xl overflow-hidden hover:opacity-90 transition-opacity cursor-zoom-in shadow-sm">
+                                                    <img src={img} className="w-full h-full object-cover" alt={`Adjunto ${idx+1}`}/>
+                                                </a>
+                                            ))}
+                                        </div>
+                                    </section>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="fixed bottom-0 left-0 right-0 p-4 bg-white/90 backdrop-blur-xl border-t border-slate-200 md:hidden z-50 flex gap-3 pb-safe">
+                        <button onClick={() => onEdit(tool)} className="flex-1 py-3.5 bg-slate-900 text-white rounded-xl text-sm font-semibold flex items-center justify-center gap-2 active:scale-95 transition-transform"><Icon name="pencil"/> Editar</button>
+                        <button onClick={() => onDelete(tool.id)} className="w-14 bg-red-50 text-red-600 rounded-xl flex items-center justify-center active:scale-95 transition-transform"><Icon name="trash"/></button>
+                    </div>
+                </div>
+            );
+        };
+
+        // =============================================================
+        //  FORMULARIO — sistema de imagen refactorizado
+        // =============================================================
+        const ProjectForm = ({ onSave, onCancel, initialData }) => {
+            const [form, setForm] = useState(() => {
+                const base = initialData || {
+                    title: '', category: '', description: '', status: 'Activo', icon: 'folder',
+                    files: [{ name: 'script.js', code: '' }],
+                    steps: [{ text: '', sub: '' }],
+                    localPaths: [{ label: '', path: '' }],
+                    images: [], attachments: []
+                };
+                return base;
+            });
+
+            // Estado de portada separado: la primera imagen del array
+            // Se sincroniza en ambas direcciones
+            const coverImage     = (form.images && form.images[0]) || '';
+            const galleryImages  = (form.images || []).slice(1);    // resto de imágenes
+
+            const setCoverImage = (val) => {
+                setForm(prev => {
+                    const rest = (prev.images || []).slice(1);
+                    return { ...prev, images: val ? [val, ...rest] : rest };
+                });
+            };
+
+            const handleArrayChange = useCallback((field, idx, subField, val) => {
+                setForm(prev => {
+                    const arr = prev[field].map((item, i) =>
+                        i === idx ? {...item, [subField]: val} : item
+                    );
+                    return {...prev, [field]: arr};
+                });
+            }, []);
+
+            const addToArray    = useCallback((field, emptyObj) => {
+                setForm(prev => ({...prev, [field]: [...prev[field], emptyObj]}));
+            }, []);
+
+            const removeFromArray = useCallback((field, idx) => {
+                setForm(prev => ({...prev, [field]: prev[field].filter((_, i) => i !== idx)}));
+            }, []);
+
+            // Galería adicional (índices 1+)
+            const handleGalleryImages = async (files) => {
+                const currentTotal = (form.images || []).length;
+                const newB64 = await processImageFiles(files, currentTotal, 12);
+                if (!newB64.length) return;
+                setForm(p => ({...p, images: [...(p.images || []), ...newB64]}));
+            };
+
+            const removeGalleryImage = (globalIdx) => {
+                setForm(prev => ({...prev, images: prev.images.filter((_, i) => i !== globalIdx)}));
+            };
+
+            const handleAttachment = async (files) => {
+                const fileList = Array.from(files);
+                if (!fileList.length) return;
+                const processFile = (file) => new Promise((resolve) => {
+                    if (file.name.startsWith('.')) return resolve(null);
+                    if (file.size > 5 * 1024 * 1024) { alert(`El archivo ${file.name} supera 5MB recomendados.`); return resolve(null); }
+                    const r = new FileReader();
+                    r.onload = e => resolve({ name: file.name, path: file.webkitRelativePath || file.name, type: file.type || 'application/octet-stream', size: file.size, data: e.target.result });
+                    r.readAsDataURL(file);
+                });
+                const newAttachments = (await Promise.all(fileList.map(processFile))).filter(a => a !== null);
+                setForm(p => ({...p, attachments: [...(p.attachments || []), ...newAttachments]}));
+            };
+
+            // Ctrl+V global → procesar como portada si no hay una, o como galería
+            useEffect(() => {
+                const handlePaste = async (e) => {
+                    const items = e.clipboardData?.items;
+                    if (!items) return;
+                    const imageFiles = Array.from(items)
+                        .filter(i => i.type.indexOf('image') !== -1)
+                        .map(i => i.getAsFile())
+                        .filter(Boolean);
+                    if (!imageFiles.length) return;
+                    e.preventDefault();
+                    // Si no hay portada → la primera imagen pegada se convierte en portada
+                    if (!coverImage) {
+                        const b64 = await processImageFile(imageFiles[0]);
+                        setCoverImage(b64);
+                        // si había más imágenes en el paste, van a galería
+                        if (imageFiles.length > 1) {
+                            await handleGalleryImages(imageFiles.slice(1));
+                        }
+                    } else {
+                        await handleGalleryImages(imageFiles);
+                    }
+                };
+                document.addEventListener('paste', handlePaste);
+                return () => document.removeEventListener('paste', handlePaste);
+            }, [coverImage, form.images]);
+
+            return (
+                <div className="slide-up max-w-4xl mx-auto pb-24 md:pb-12">
+                    <div className="sticky top-0 z-40 bg-white/90 backdrop-blur-xl border-b border-slate-200 px-4 py-4 md:static md:bg-transparent md:border-none md:p-0 flex items-center justify-between mb-6 -mx-4 md:mx-0">
+                        <h2 className="text-xl md:text-2xl font-bold text-slate-900 tracking-tight">{initialData ? 'Editar Registro' : 'Nuevo Registro'}</h2>
+                        <button type="button" onClick={onCancel} className="w-8 h-8 md:w-10 md:h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 hover:bg-slate-200 transition-colors"><Icon name="times"/></button>
+                    </div>
+
+                    <form onSubmit={(e) => { e.preventDefault(); onSave(form); }} className="space-y-6 md:space-y-8">
+
+                        {/* Información General */}
+                        <div className="bg-white p-5 md:p-8 rounded-3xl shadow-sm border border-slate-200/60">
+                            <h3 className="text-sm font-bold text-slate-800 mb-5 flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-indigo-500"></div> Información General</h3>
+                            <div className="space-y-5">
+                                <div>
+                                    <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Título *</label>
+                                    <input required className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none text-slate-800 font-medium transition-all" value={form.title} onChange={e => { const v = e.target.value; setForm(prev => ({...prev, title: v})); }} placeholder="Ej. Arquitectura Backend" />
+                                </div>
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                    <div className="col-span-2 md:col-span-1">
+                                        <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Categoría</label>
+                                        <input className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-indigo-500 outline-none transition-all" value={form.category} onChange={e => { const v = e.target.value; setForm(prev => ({...prev, category: v})); }} placeholder="Frontend..." />
+                                    </div>
+                                    <div className="col-span-2 md:col-span-1">
+                                        <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Estado</label>
+                                        <select className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none" value={form.status} onChange={e => { const v = e.target.value; setForm(prev => ({...prev, status: v})); }}>
+                                            <option>Activo</option><option>En Desarrollo</option><option>En Pausa</option><option>Archivado</option>
+                                        </select>
+                                    </div>
+                                    <div className="col-span-2 md:col-span-2">
+                                        <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Icono (FontAwesome)</label>
+                                        <input className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-indigo-500 outline-none transition-all" value={form.icon} onChange={e => { const v = e.target.value; setForm(prev => ({...prev, icon: v})); }} placeholder="code, server, database..." />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wide">Descripción</label>
+                                    <textarea className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-indigo-500 outline-none transition-all min-h-[100px] resize-none" value={form.description} onChange={e => { const v = e.target.value; setForm(prev => ({...prev, description: v})); }} placeholder="Detalles principales del activo..."></textarea>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Entorno y Configuración */}
+                        <div className="bg-white p-5 md:p-8 rounded-3xl shadow-sm border border-slate-200/60">
+                            <h3 className="text-sm font-bold text-slate-800 mb-5 flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-emerald-500"></div> Entorno y Configuración</h3>
+                            <div className="space-y-8">
+                                <div>
+                                    <div className="flex justify-between items-center mb-3">
+                                        <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Accesos Locales</label>
+                                        <button type="button" onClick={() => addToArray('localPaths', {label:'', path:''})} className="text-indigo-600 text-xs font-bold px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 transition-colors">+ Ruta</button>
+                                    </div>
+                                    <div className="space-y-3">
+                                        {form.localPaths.map((p, i) => (
+                                            <div key={i} className="flex gap-2">
+                                                <input placeholder="Etiqueta" className="w-1/3 px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm outline-none" value={p.label} onChange={e => handleArrayChange('localPaths', i, 'label', e.target.value)} />
+                                                <input placeholder="/ruta/absoluta" className="flex-1 px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono outline-none" value={p.path} onChange={e => handleArrayChange('localPaths', i, 'path', e.target.value)} />
+                                                <button type="button" onClick={() => removeFromArray('localPaths', i)} className="w-10 flex items-center justify-center text-slate-400 hover:text-red-500 bg-slate-50 rounded-xl"><Icon name="times"/></button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div>
+                                    <div className="flex justify-between items-center mb-3">
+                                        <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Comandos</label>
+                                        <button type="button" onClick={() => addToArray('steps', {text:'', sub:''})} className="text-indigo-600 text-xs font-bold px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 transition-colors">+ Comando</button>
+                                    </div>
+                                    <div className="space-y-3">
+                                        {form.steps.map((s, i) => (
+                                            <div key={i} className="flex gap-2 bg-slate-50 p-2 rounded-xl border border-slate-200">
+                                                <div className="flex-1 space-y-2">
+                                                    <input placeholder="Qué hace este paso?" className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg outline-none" value={s.text} onChange={e => handleArrayChange('steps', i, 'text', e.target.value)} />
+                                                    <input placeholder="npm start" className="w-full px-3 py-2 text-xs font-mono bg-slate-800 text-emerald-400 rounded-lg outline-none" value={s.sub} onChange={e => handleArrayChange('steps', i, 'sub', e.target.value)} />
+                                                </div>
+                                                <button type="button" onClick={() => removeFromArray('steps', i)} className="w-8 flex items-center justify-center text-slate-400 hover:text-red-500"><Icon name="times"/></button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Fragmentos de Código */}
+                        <div className="bg-white p-5 md:p-8 rounded-3xl shadow-sm border border-slate-200/60">
+                            <div className="flex justify-between items-center mb-5">
+                                <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-blue-500"></div> Fragmentos de Código</h3>
+                                <button type="button" onClick={() => addToArray('files', {name:'script.js', code:''})} className="text-indigo-600 text-xs font-bold px-3 py-1.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 transition-colors">+ Archivo</button>
+                            </div>
+                            <div className="space-y-5">
+                                {form.files.map((file, i) => (
+                                    <div key={i} className="rounded-2xl overflow-hidden border border-slate-200">
+                                        <div className="bg-slate-100 px-4 py-3 flex justify-between items-center">
+                                            <input placeholder="nombre.ext" className="bg-transparent font-mono text-sm font-bold text-slate-700 outline-none" value={file.name} onChange={e => handleArrayChange('files', i, 'name', e.target.value)} />
+                                            <button type="button" onClick={() => removeFromArray('files', i)} className="text-slate-400 hover:text-red-500"><Icon name="trash"/></button>
+                                        </div>
+                                        <textarea placeholder="Código..." className="w-full h-40 p-4 font-mono text-[13px] bg-slate-900 text-slate-300 outline-none resize-y block" value={file.code} onChange={e => handleArrayChange('files', i, 'code', e.target.value)}></textarea>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* ── Archivos & Media — sistema nuevo ── */}
+                        <div className="bg-white p-5 md:p-8 rounded-3xl shadow-sm border border-slate-200/60">
+                            <h3 className="text-sm font-bold text-slate-800 mb-6 flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-amber-500"></div> Archivos & Media</h3>
+                            <div className="space-y-8">
+
+                                {/* PORTADA */}
+                                <div>
+                                    <label className="flex justify-between items-center text-xs font-semibold text-slate-500 mb-3 uppercase tracking-wide">
+                                        <span>Imagen de Portada</span>
+                                        {coverImage && <span className="text-[10px] bg-emerald-50 text-emerald-600 border border-emerald-200 px-2 py-0.5 rounded-full font-medium normal-case tracking-normal">✓ Portada activa</span>}
+                                    </label>
+                                    <CoverImagePicker value={coverImage} onChange={setCoverImage} />
+                                </div>
+
+                                {/* GALERÍA ADICIONAL */}
+                                <div>
+                                    <label className="flex justify-between items-center text-xs font-semibold text-slate-500 mb-3 uppercase tracking-wide">
+                                        <span>Galería adicional</span>
+                                        <span className="text-[10px] text-slate-400 normal-case tracking-normal font-medium">{form.images.length}/12 imágenes en total</span>
+                                    </label>
+                                    <div className="flex flex-wrap gap-3">
+                                        {/* Mostrar imágenes de galería (índice 1 en adelante) */}
+                                        {(form.images || []).map((img, globalIdx) => {
+                                            if (globalIdx === 0) return null; // portada ya se muestra arriba
+                                            return (
+                                                <div key={globalIdx} className="relative w-[calc(33.33%-8px)] md:w-24 aspect-square rounded-xl border border-slate-200 overflow-hidden group">
+                                                    <img src={img} className="w-full h-full object-cover" alt={`Galería ${globalIdx}`}/>
+                                                    <button type="button" onClick={() => removeGalleryImage(globalIdx)} className="absolute top-1 right-1 bg-red-500/90 backdrop-blur text-white w-6 h-6 rounded-full flex items-center justify-center md:opacity-0 group-hover:opacity-100 transition-opacity">
+                                                        <Icon name="times" className="text-[10px]"/>
+                                                    </button>
+                                                </div>
+                                            );
+                                        })}
+                                        {/* Botón agregar más (si hay menos de 12 en total) */}
+                                        {(form.images || []).length < 12 && (
+                                            <label className="w-[calc(33.33%-8px)] md:w-24 aspect-square rounded-xl border border-dashed border-slate-300 flex flex-col items-center justify-center cursor-pointer bg-slate-50 hover:bg-indigo-50 hover:border-indigo-300 text-slate-400 hover:text-indigo-500 transition-colors">
+                                                <Icon name="plus" className="text-lg"/>
+                                                <input type="file" multiple accept="image/*" className="hidden" onChange={e => handleGalleryImages(e.target.files)} />
+                                            </label>
+                                        )}
+                                    </div>
+                                    {(form.images || []).length === 0 && (
+                                        <p className="text-[11px] text-slate-400 mt-2">Las imágenes adicionales aparecen en la galería visual del detalle.</p>
+                                    )}
+                                </div>
+
+                                {/* ARCHIVOS ADJUNTOS */}
+                                <div>
+                                    <label className="block text-xs font-semibold text-slate-500 mb-3 uppercase tracking-wide">Archivos Adjuntos</label>
+                                    {form.attachments && form.attachments.length > 0 && (
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                                            {form.attachments.map((att, i) => (
+                                                <div key={i} className="flex items-center justify-between bg-slate-50 border border-slate-200 p-3 rounded-xl">
+                                                    <div className="truncate">
+                                                        <p className="text-sm font-bold text-slate-700 truncate" title={att.path || att.name}>{att.path || att.name}</p>
+                                                        <p className="text-[10px] text-slate-500">{(att.size/1024/1024).toFixed(2)} MB</p>
+                                                    </div>
+                                                    <button type="button" onClick={() => removeFromArray('attachments', i)} className="p-2 text-slate-400 hover:text-red-500"><Icon name="times"/></button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                    <div className="flex gap-3">
+                                        <label className="flex-1 py-4 bg-slate-50 rounded-xl border border-dashed border-slate-300 flex flex-col items-center justify-center cursor-pointer hover:bg-indigo-50 hover:border-indigo-300 transition-colors text-slate-500 hover:text-indigo-600">
+                                            <Icon name="upload" className="text-xl mb-1"/>
+                                            <span className="text-xs font-bold">Archivo Suelto</span>
+                                            <input type="file" multiple className="hidden" onChange={e => handleAttachment(e.target.files)} />
+                                        </label>
+                                        <label className="flex-1 py-4 bg-slate-50 rounded-xl border border-dashed border-slate-300 flex flex-col items-center justify-center cursor-pointer hover:bg-indigo-50 hover:border-indigo-300 transition-colors text-slate-500 hover:text-indigo-600">
+                                            <Icon name="folder-open" className="text-xl mb-1"/>
+                                            <span className="text-xs font-bold">Subir Carpeta</span>
+                                            <input type="file" webkitdirectory="true" directory="true" multiple className="hidden" onChange={e => handleAttachment(e.target.files)} />
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="fixed bottom-0 left-0 right-0 p-4 bg-white/90 backdrop-blur-xl border-t border-slate-200 md:static md:bg-transparent md:border-none md:p-0 z-50 flex gap-3 pb-safe">
+                            <button type="button" onClick={onCancel} className="flex-1 md:flex-none px-6 py-3.5 md:py-3 bg-slate-100 text-slate-700 rounded-xl font-bold hover:bg-slate-200 transition-colors">Cancelar</button>
+                            <button type="submit" className="flex-[2] md:flex-none px-8 py-3.5 md:py-3 bg-slate-900 text-white rounded-xl font-bold shadow-[0_4px_14px_0_rgba(0,0,0,0.2)] hover:bg-slate-800 hover:shadow-[0_6px_20px_rgba(0,0,0,0.23)] active:scale-95 transition-all flex items-center justify-center gap-2">
+                                Guardar <Icon name="check"/>
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            );
+        };
+
+        // =============================================================
+        //  APP PRINCIPAL
+        // =============================================================
+        const App = () => {
+            const [projects, setProjects]             = useState([]);
+            const [loading, setLoading]               = useState(true);
+            const [view, setView]                     = useState('grid');
+            const [selectedId, setSelectedId]         = useState(null);
+            const [editingProject, setEditingProject] = useState(null);
+            const [search, setSearch]                 = useState('');
+            const [gasError, setGasError]             = useState(false);
+
+            const IS_NATIVE      = typeof google !== 'undefined' && google.script && google.script.run;
+            const GAS_CONFIGURED = window.GAS_URL && !window.GAS_URL.includes('XXXX_TU_ID');
+
+            useEffect(() => {
+                if (IS_NATIVE) {
+                    google.script.run
+                        .withSuccessHandler(res => { setProjects(res.data ? JSON.parse(res.data) : MOCK_DATA); setLoading(false); })
+                        .cargarBaseDeDatos();
+                } else if (GAS_CONFIGURED) {
+                    apiCargar()
+                        .then(data => { setProjects(data.length > 0 ? data : MOCK_DATA); setLoading(false); })
+                        .catch(err  => { console.error(err); setGasError(true); setProjects(MOCK_DATA); setLoading(false); });
+                } else {
+                    setTimeout(() => { setProjects(MOCK_DATA); setLoading(false); }, 600);
+                }
+            }, []);
+
+            const persistir = async (newProjects) => {
+                if (!GAS_CONFIGURED) return;
+                try {
+                    await fetch(window.GAS_URL, {
+                        method:  'POST',
+                        mode:    'no-cors',
+                        headers: { 'Content-Type': 'application/json' },
+                        body:    JSON.stringify({ action: 'guardar', data: newProjects })
+                    });
+                } catch (e) {
+                    console.warn('Error guardando:', e);
+                }
+            };
+
+            const handleSave = (data) => {
+                setLoading(true);
+                const isUpdate  = !!editingProject;
+                const cleanData = {
+                    ...data,
+                    id:          isUpdate ? editingProject.id : Date.now(),
+                    files:       data.files.filter(f => f.name.trim()),
+                    steps:       data.steps.filter(s => s.text.trim()),
+                    localPaths:  data.localPaths.filter(p => p.label.trim() || p.path.trim()),
+                    attachments: data.attachments || [],
+                    images:      (data.images || []).filter(img => img && img.trim())
+                };
+                const newProjects = isUpdate
+                    ? projects.map(p => p.id === cleanData.id ? cleanData : p)
+                    : [cleanData, ...projects];
+                setProjects(newProjects);
+                persistir(newProjects);
+                setTimeout(() => { setLoading(false); setView('grid'); setEditingProject(null); }, 400);
+            };
+
+            const handleDelete = (id) => {
+                if (!confirm("¿Eliminar registro de forma permanente?")) return;
+                const newProjects = projects.filter(p => p.id !== id);
+                setProjects(newProjects);
+                persistir(newProjects);
+                if (selectedId === id) setView('grid');
+            };
+
+            const handleTogglePin = (id) => {
+                const newProjects = projects.map(p => p.id === id ? { ...p, pinned: !p.pinned } : p);
+                setProjects(newProjects);
+                persistir(newProjects);
+            };
+
+            const filtered = projects
+                .filter(p => p.title.toLowerCase().includes(search.toLowerCase()) || p.category.toLowerCase().includes(search.toLowerCase()))
+                .sort((a, b) => { if (a.pinned && !b.pinned) return -1; if (!a.pinned && b.pinned) return 1; return b.id - a.id; });
+
+            return (
+                <div className="min-h-screen flex flex-col pb-20 md:pb-0">
+                
+                
+                    
+                    
+                    
+                    
+                    
+                    
+
+                    <main className="flex-1 p-4 md:p-8 relative">
+                        {loading && (
+                            <div className="absolute inset-0 bg-[var(--bg-app)]/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center">
+                                <div className="loader mb-4"></div>
+                                <span className="text-xs font-bold uppercase tracking-widest text-slate-400">Sincronizando...</span>
+                            </div>
+                        )}
+
+                        {view === 'grid' && (
+                            <div className="fade-in max-w-7xl mx-auto">
+                             
+                             
+                             
+                             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+    <div className="flex items-center gap-3">
+        {IS_NATIVE ? (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-emerald-200 bg-emerald-50">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span className="text-[10px] font-bold text-emerald-700">Nativo GAS</span>
+            </div>
+        ) : gasError ? (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-red-200 bg-red-50">
+                <span className="w-1.5 h-1.5 rounded-full bg-red-500"></span>
+                <span className="text-[10px] font-bold text-red-600">Error API</span>
+            </div>
+        ) : GAS_CONFIGURED ? (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-emerald-200 bg-emerald-50">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span className="text-[10px] font-bold text-emerald-700">API Externa</span>
+            </div>
+        ) : (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-amber-200 bg-amber-50">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                <span className="text-[10px] font-bold text-amber-600">Demo Local</span>
+            </div>
+        )}
+        <span className="text-xs text-slate-400">•</span>
+        <span className="text-xs font-medium text-slate-500">{filtered.length} activos</span>
+    </div>
+
+    <div className="flex items-center gap-3 w-full md:w-auto">
+        <div className="relative flex-1 md:w-72">
+            <Icon name="search" className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 text-sm" />
+            <input 
+                type="text" 
+                placeholder="Buscar..." 
+                className="w-full pl-10 pr-4 py-2 bg-white border border-slate-200/60 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none text-sm shadow-sm transition-all" 
+                value={search} 
+                onChange={(e) => setSearch(e.target.value)} 
+            />
+        </div>
+        <button 
+            onClick={() => { setEditingProject(null); setView('form'); }} 
+            className="bg-slate-900 text-white px-4 py-2 rounded-xl font-bold text-sm shadow-md hover:bg-slate-800 hover:shadow-lg active:scale-95 transition-all flex items-center gap-2 whitespace-nowrap"
+        >
+            <Icon name="plus" className="text-xs" /> Nuevo
+        </button>
+    </div>
+</div>
+                             
+                             
+                             
+                             
+                             
+                             
+                             
+                                {!IS_NATIVE && !GAS_CONFIGURED && (
+                                    <div className="mb-6 bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3">
+                                        <div className="w-8 h-8 bg-amber-100 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5"><Icon name="zap" className="text-amber-600 text-sm"/></div>
+                                        <div>
+                                            <p className="text-sm font-bold text-amber-800">Modo demo — sin persistencia</p>
+                                            <p className="text-xs text-amber-700 mt-0.5">Edita <code className="bg-amber-100 px-1 rounded font-mono">window.GAS_URL</code> en el código para guardar tus cambios.</p>
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6">
+                                    {filtered.map(p => (
+                                        <ToolGridCard
+                                            key={p.id}
+                                            tool={p}
+                                            onClick={() => { setSelectedId(p.id); setView('detail'); }}
+                                            onDelete={handleDelete}
+                                            onEdit={(t) => { setEditingProject(t); setView('form'); }}
+                                            onTogglePin={handleTogglePin}
+                                        />
+                                    ))}
+                                </div>
+
+                                {filtered.length === 0 && !loading && (
+                                    <div className="text-center py-20 bg-transparent border-2 border-dashed border-slate-200 rounded-3xl mt-4">
+                                        <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center mx-auto shadow-sm mb-4"><Icon name="folder-open" className="text-2xl text-slate-300" /></div>
+                                        <h3 className="text-lg font-bold text-slate-800">Directorio vacío</h3>
+                                        <p className="text-slate-500 text-sm mt-1">No hay activos que coincidan con tu búsqueda.</p>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {view === 'form' && <ProjectForm onSave={handleSave} onCancel={() => setView('grid')} initialData={editingProject} />}
+                        {view === 'detail' && projects.find(p => p.id === selectedId) && (
+                            <ProjectDetailView
+                                tool={projects.find(p => p.id === selectedId)}
+                                onBack={() => setView('grid')}
+                                onDelete={handleDelete}
+                                onEdit={(t) => { setEditingProject(t); setView('form'); }}
+                                onTogglePin={handleTogglePin}
+                            />
+                        )}
+                    </main>
+
+                    {view === 'grid' && (
+                        <button onClick={() => { setEditingProject(null); setView('form'); }} className="md:hidden fixed bottom-6 right-6 w-14 h-14 bg-slate-900 text-white rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.2)] flex items-center justify-center z-40 active:scale-90 transition-transform">
+                            <Icon name="plus" className="text-xl" />
+                        </button>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
+
+
+<!-- ================================================================ -->
+<!--  SLEEKDOCK - VERSIÓN SIMPLIFICADA PARA GOOGLE SITES (MÓVIL)      -->
+<!--  Usa solo eventos click para máxima compatibilidad               -->
+<!-- ================================================================ -->
+
+<style>
+/* ===== RESET Y ESTILOS DEL COMPONENTE ===== */
+.sdk-container * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+.sdk-container {
+    position: fixed;
+    width: 58px;
+    height: 58px;
+    z-index: 99999;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    transition: left 0.3s cubic-bezier(0.16, 1, 0.3, 1), top 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@media (max-width: 640px) {
+    .sdk-container { width: 52px; height: 52px; }
+}
+
+/* ===== BOTÓN PRINCIPAL ===== */
+.sdk-orb {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    background: linear-gradient(145deg, #ffffff 0%, #f0f2ff 100%);
+    border: 2px solid rgba(99, 102, 241, 0.3);
+    box-shadow: 0 8px 32px rgba(99, 102, 241, 0.2), 0 2px 8px rgba(0, 0, 0, 0.06);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    position: relative;
+    transition: all 0.3s ease;
+    z-index: 10;
+}
+.sdk-orb:active {
+    transform: scale(0.92);
+}
+.sdk-orb svg {
+    width: 20px;
+    height: 20px;
+}
+.sdk-orb svg path {
+    stroke: #1e1b4b;
+}
+
+/* ===== MENÚ ===== */
+.sdk-track {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    pointer-events: none;
+    width: max-content;
+    z-index: 5;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.sdk-bottom .sdk-track {
+    bottom: calc(58px + 14px);
+    flex-direction: column-reverse;
+}
+.sdk-top .sdk-track {
+    top: calc(58px + 14px);
+    flex-direction: column;
+}
+.sdk-left .sdk-track {
+    left: calc(58px + 14px);
+    align-items: flex-start;
+}
+.sdk-right .sdk-track {
+    right: calc(58px + 14px);
+    align-items: flex-end;
+}
+@media (max-width: 640px) {
+    .sdk-bottom .sdk-track { bottom: calc(52px + 14px); }
+    .sdk-top .sdk-track { top: calc(52px + 14px); }
+    .sdk-left .sdk-track { left: calc(52px + 14px); }
+    .sdk-right .sdk-track { right: calc(52px + 14px); }
+}
+
+.sdk-open .sdk-track {
+    pointer-events: auto;
+    opacity: 1;
+}
+
+/* ===== CADA OPCIÓN ===== */
+.sdk-pill {
+    display: flex;
+    align-items: center;
+    height: 48px;
+    width: 48px;
+    border-radius: 24px;
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid rgba(99, 102, 241, 0.2);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    color: #4b5563;
+    padding: 0 5px;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+    transition: width 0.4s cubic-bezier(0.16, 1, 0.3, 1),
+                background-color 0.3s ease,
+                border-color 0.3s ease,
+                transform 0.3s ease,
+                box-shadow 0.3s ease,
+                opacity 0.3s ease;
+    opacity: 0;
+    transform: scale(0.8);
+}
+@media (max-width: 640px) {
+    .sdk-pill { height: 44px; width: 44px; border-radius: 22px; }
+}
+
+.sdk-open .sdk-pill {
+    opacity: 1;
+    transform: scale(1);
+}
+
+.sdk-left .sdk-pill { flex-direction: row; }
+.sdk-left .sdk-pill-label { margin-left: 8px; margin-right: 16px; }
+.sdk-right .sdk-pill { flex-direction: row-reverse; }
+.sdk-right .sdk-pill-label { margin-right: 8px; margin-left: 16px; }
+
+.sdk-pill-icon {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(99, 102, 241, 0.08);
+    border: 1px solid rgba(99, 102, 241, 0.1);
+    flex-shrink: 0;
+    color: #4f46e5;
+    transition: all 0.25s ease;
+}
+@media (max-width: 640px) {
+    .sdk-pill-icon { width: 34px; height: 34px; }
+}
+.sdk-pill-icon svg {
+    width: 16px;
+    height: 16px;
+    stroke: currentColor;
+}
+.sdk-pill-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: #1e1b4b;
+    white-space: nowrap;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.sdk-pill-active {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(139, 92, 246, 0.08) 100%);
+    border-color: rgba(99, 102, 241, 0.5);
+    box-shadow: 0 4px 20px rgba(99, 102, 241, 0.2);
+}
+.sdk-pill-active .sdk-pill-icon {
+    background: rgba(99, 102, 241, 0.2);
+    border-color: rgba(99, 102, 241, 0.3);
+}
+.sdk-pill-active .sdk-pill-label {
+    opacity: 1;
+}
+
+/* ===== TOAST ===== */
+.sdk-toast {
+    position: fixed;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    z-index: 100000;
+    opacity: 0;
+    transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+    pointer-events: none;
+}
+.sdk-toast-show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+    pointer-events: auto;
+}
+.sdk-toast-box {
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid rgba(99, 102, 241, 0.25);
+    backdrop-filter: blur(16px);
+    border-radius: 100px;
+    padding: 10px 24px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+}
+.sdk-toast-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #4f46e5;
+    animation: sdk-pulse 1.8s infinite;
+}
+@keyframes sdk-pulse {
+    0%, 100% { opacity: 0.4; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.3); }
+}
+.sdk-toast-text {
+    font-size: 13px;
+    font-weight: 600;
+    color: #1e1b4b;
+}
+</style>
+
+<!-- ===== HTML ===== -->
+<div class="sdk-container sdk-right sdk-bottom" id="sdk-dock">
+    <div class="sdk-track" id="sdk-track"></div>
+    <div class="sdk-orb" id="sdk-orb">
+        <svg viewBox="0 0 24 24" fill="none">
+            <path id="sdk-line1" d="M4 6H20" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+            <path id="sdk-line2" d="M4 12H20" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+            <path id="sdk-line3" d="M4 18H20" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+        </svg>
+    </div>
+</div>
+
+<div class="sdk-toast" id="sdk-toast">
+    <div class="sdk-toast-box">
+        <div class="sdk-toast-dot"></div>
+        <span class="sdk-toast-text" id="sdk-toast-text">Sistema listo</span>
+    </div>
+</div>
+
+<!-- ===== JAVASCRIPT SIMPLIFICADO ===== -->
+<script>
+(function() {
+    'use strict';
+
+    // ================================================================
+    // CONFIGURACIÓN
+    // ================================================================
+    var MENU_ITEMS = [
+        {
+            name: "Métricas",
+            icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>`,
+            action: function() { showToast("📊 Métricas actualizadas"); }
+        },
+        {
+            name: "Conexión",
+            icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>`,
+            action: function() { showToast("🔒 Túnel encriptado activo"); }
+        },
+        {
+            name: "Ajustes",
+            icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 008 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.54 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>`,
+            action: function() { showToast("⚙️ Preferencias guardadas"); }
+        }
+    ];
+
+    // ================================================================
+    // TOAST
+    // ================================================================
+    var toastTimer = null;
+    function showToast(text) {
+        var toast = document.getElementById('sdk-toast');
+        var textEl = document.getElementById('sdk-toast-text');
+        if (!toast || !textEl) return;
+        textEl.textContent = text;
+        toast.classList.add('sdk-toast-show');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(function() {
+            toast.classList.remove('sdk-toast-show');
+        }, 2500);
+    }
+    window.sdkNotify = showToast;
+
+    // ================================================================
+    // CONTROL PRINCIPAL (SOLO CLICK)
+    // ================================================================
+    var wrapper = document.getElementById('sdk-dock');
+    var track = document.getElementById('sdk-track');
+    var orb = document.getElementById('sdk-orb');
+    if (!wrapper || !track || !orb) return;
+
+    var isOpen = false;
+    var isDragging = false;
+    var startX = 0, startY = 0;
+    var offsetX = 0, offsetY = 0;
+    var currentX = window.innerWidth - 82;
+    var currentY = window.innerHeight - 82;
+
+    // ---- Construir menú ----
+    MENU_ITEMS.forEach(function(item) {
+        var btn = document.createElement('button');
+        btn.className = 'sdk-pill';
+        btn.innerHTML = `
+            <div class="sdk-pill-icon">${item.icon}</div>
+            <span class="sdk-pill-label">${item.name}</span>
+        `;
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            if (!isOpen) return;
+            
+            if (btn.classList.contains('sdk-pill-active')) {
+                item.action();
+                closeDock();
+                return;
+            }
+            
+            var allPills = track.querySelectorAll('.sdk-pill');
+            allPills.forEach(function(p) {
+                p.classList.remove('sdk-pill-active');
+                p.style.width = (window.innerWidth < 640 ? '44px' : '48px');
+            });
+            btn.classList.add('sdk-pill-active');
+            btn.style.width = (window.innerWidth < 640 ? '190px' : '210px');
+        });
+        track.appendChild(btn);
+    });
+
+    // ---- Posicionamiento ----
+    function getClampedPosition(x, y, openState) {
+        var screenW = window.innerWidth;
+        var screenH = window.innerHeight;
+        var isMobile = screenW < 640;
+        var orbSize = isMobile ? 52 : 58;
+        var safe = isMobile ? 16 : 24;
+        var maxPillW = isMobile ? 190 : 210;
+        var pillH = isMobile ? 44 : 48;
+        var gap = 10;
+        var menuH = MENU_ITEMS.length * pillH + (MENU_ITEMS.length - 1) * gap + 14;
+
+        var isLeft = x < (screenW / 2);
+        var isTop = y < (screenH / 2);
+
+        var minX = safe;
+        var maxX = screenW - orbSize - safe;
+        var minY = safe;
+        var maxY = screenH - orbSize - safe;
+
+        if (openState) {
+            if (isLeft) {
+                maxX = screenW - safe - maxPillW;
+            } else {
+                minX = safe + maxPillW - orbSize;
+            }
+            if (isTop) {
+                maxY = screenH - safe - orbSize - menuH;
+            } else {
+                minY = safe + menuH;
+            }
+        }
+
+        return {
+            x: Math.max(minX, Math.min(maxX, x)),
+            y: Math.max(minY, Math.min(maxY, y)),
+            isLeft: isLeft,
+            isTop: isTop
+        };
+    }
+
+    function updatePosition(x, y, openState, skipLayout) {
+        openState = (openState !== undefined) ? openState : isOpen;
+        skipLayout = skipLayout || false;
+        var pos = getClampedPosition(x, y, openState);
+        currentX = pos.x;
+        currentY = pos.y;
+
+        if (!skipLayout) {
+            wrapper.classList.remove('sdk-left', 'sdk-right', 'sdk-top', 'sdk-bottom');
+            wrapper.classList.add(pos.isLeft ? 'sdk-left' : 'sdk-right');
+            wrapper.classList.add(pos.isTop ? 'sdk-top' : 'sdk-bottom');
+        }
+        wrapper.style.left = pos.x + 'px';
+        wrapper.style.top = pos.y + 'px';
+    }
+
+    // ---- Abrir / Cerrar ----
+    function toggleDock() {
+        if (isOpen) {
+            closeDock();
+        } else {
+            openDock();
+        }
+    }
+
+    function openDock() {
+        if (isOpen) return;
+        isOpen = true;
+        wrapper.classList.add('sdk-open');
+        
+        var line1 = document.getElementById('sdk-line1');
+        var line2 = document.getElementById('sdk-line2');
+        var line3 = document.getElementById('sdk-line3');
+        if (line1) line1.setAttribute('d', 'M6 18L18 6M6 6l12 12');
+        if (line2) line2.setAttribute('d', '');
+        if (line3) line3.setAttribute('d', '');
+        
+        updatePosition(currentX, currentY, true);
+    }
+
+    function closeDock() {
+        if (!isOpen) return;
+        isOpen = false;
+        wrapper.classList.remove('sdk-open');
+        
+        var line1 = document.getElementById('sdk-line1');
+        var line2 = document.getElementById('sdk-line2');
+        var line3 = document.getElementById('sdk-line3');
+        if (line1) line1.setAttribute('d', 'M4 6H20');
+        if (line2) line2.setAttribute('d', 'M4 12H20');
+        if (line3) line3.setAttribute('d', 'M4 18H20');
+        
+        var allPills = track.querySelectorAll('.sdk-pill');
+        allPills.forEach(function(p) {
+            p.classList.remove('sdk-pill-active');
+            p.style.width = (window.innerWidth < 640 ? '44px' : '48px');
+        });
+        
+        setTimeout(function() {
+            updatePosition(currentX, currentY, false);
+        }, 50);
+    }
+
+    // ---- Arrastre con mouse (y touch) ----
+    function getPos(e) {
+        if (e.touches && e.touches.length > 0) {
+            return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        }
+        return { x: e.clientX, y: e.clientY };
+    }
+
+    function onStart(e) {
+        if (e.target.closest('.sdk-pill')) return;
+        var pos = getPos(e);
+        isDragging = true;
+        startX = pos.x;
+        startY = pos.y;
+        var rect = wrapper.getBoundingClientRect();
+        offsetX = pos.x - rect.left;
+        offsetY = pos.y - rect.top;
+        wrapper.style.transition = 'none';
+    }
+
+    function onMove(e) {
+        if (!isDragging) return;
+        var pos = getPos(e);
+        var dx = pos.x - startX;
+        var dy = pos.y - startY;
+
+        if (Math.hypot(dx, dy) > 5) {
+            if (isOpen) closeDock();
+            e.preventDefault();
+            var targetX = pos.x - offsetX;
+            var targetY = pos.y - offsetY;
+            updatePosition(targetX, targetY, false);
+        }
+    }
+
+    function onEnd(e) {
+        if (!isDragging) return;
+        isDragging = false;
+        wrapper.style.transition = 'left 0.3s cubic-bezier(0.16, 1, 0.3, 1), top 0.3s cubic-bezier(0.16, 1, 0.3, 1)';
+        updatePosition(currentX, currentY, false);
+    }
+
+    // ---- Eventos ----
+    orb.addEventListener('mousedown', onStart);
+    orb.addEventListener('touchstart', onStart, { passive: true });
+    
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('touchmove', onMove, { passive: false });
+    
+    document.addEventListener('mouseup', onEnd);
+    document.addEventListener('touchend', onEnd, { passive: true });
+
+    // ---- CLICK para abrir/cerrar (funciona en móvil y escritorio) ----
+    orb.addEventListener('click', function(e) {
+        e.stopPropagation();
+        if (!isDragging) {
+            toggleDock();
+        }
+    });
+
+    // ---- Cerrar al hacer clic fuera ----
+    document.addEventListener('click', function(e) {
+        if (isOpen && !wrapper.contains(e.target)) {
+            closeDock();
+        }
+    });
+
+    // ---- Redimensionar ----
+    window.addEventListener('resize', function() {
+        updatePosition(currentX, currentY, isOpen);
+    });
+
+    // ---- Posición inicial ----
+    setTimeout(function() {
+        var startX = window.innerWidth - (window.innerWidth < 640 ? 68 : 82);
+        var startY = window.innerHeight - (window.innerWidth < 640 ? 68 : 82);
+        updatePosition(startX, startY);
+    }, 200);
+
+})();
+</script>
+
