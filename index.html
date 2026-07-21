@@ -360,9 +360,9 @@
         </div>
         <div class="controls">
             <select id="langSelect" class="lang-select">
-                <option value="html">ðŸŒ HTML / CSS / JS</option>
-                <option value="react">âš›ï¸ React (JSX)</option>
-                <option value="python">ðŸ Python (Pyodide)</option>
+                <option value="html">🌐 HTML / CSS / JS</option>
+                <option value="react">⚛️ React (JSX)</option>
+                <option value="python">🐍 Python (Pyodide)</option>
             </select>
             
             <button class="btn btn-secondary" onclick="resetEditor()" title="Cargar Plantilla">
@@ -379,11 +379,11 @@
         <!-- Panel del Editor -->
         <div class="panel" id="editorPanel">
             <div class="panel-header">
-                <span><i class="fas fa-keyboard"></i> CÃ³digo Fuente (<span id="langIndicator">HTML</span>)</span>
+                <span><i class="fas fa-keyboard"></i> Código Fuente (<span id="langIndicator">HTML</span>)</span>
                 
                 <!-- NUEVAS FUNCIONES DE PRODUCTIVIDAD -->
                 <div class="toolbar-group">
-                    <button class="btn btn-secondary btn-icon" onclick="formatCode()" title="Formatear CÃ³digo">
+                    <button class="btn btn-secondary btn-icon" onclick="formatCode()" title="Formatear Código">
                         <i class="fas fa-align-left"></i>
                     </button>
                     <button class="btn btn-secondary btn-icon" onclick="copyCode()" title="Copiar al Portapapeles">
@@ -416,8 +416,8 @@
                 
                 <!-- Python Real Output -->
                 <div id="pythonTerminal" class="python-terminal">
-                    <div class="term-header">ðŸ Consola Python (Pyodide WebAssembly)</div>
-                    <div id="termOutput" class="term-output">Esperando ejecuciÃ³n...</div>
+                    <div class="term-header">🐍 Consola Python (Pyodide WebAssembly)</div>
+                    <div id="termOutput" class="term-output">Esperando ejecución...</div>
                 </div>
             </div>
         </div>
@@ -425,10 +425,10 @@
 
     <div class="status-bar">
         <span id="statusMsg"><i class="fas fa-check-circle" style="color: var(--success);"></i> Listo. Usa Ctrl+F para buscar y Ctrl+S para guardar.</span>
-        <span id="posIndicator">LÃ­nea 1, Col 1</span>
+        <span id="posIndicator">Línea 1, Col 1</span>
     </div>
 
-    <div id="toast" class="toast">NotificaciÃ³n</div>
+    <div id="toast" class="toast">Notificación</div>
 
     <!-- Scripts Core de CodeMirror -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.js"></script>
@@ -469,7 +469,7 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>AnimaciÃ³n Web</title>
+    <title>Animación Web</title>
     <style>
         body { 
             margin: 0; height: 100vh; display: flex; 
@@ -494,7 +494,7 @@
     </div>
 
     <script>
-        // Tip: Selecciona cÃ³digo y presiona Ctrl+/ para comentar
+        // Tip: Selecciona código y presiona Ctrl+/ para comentar
         let grados = 0;
         document.getElementById('caja').addEventListener('click', function() {
             grados += 90;
@@ -504,7 +504,7 @@
 </body>
 </html>`,
 
-            react: `// Editor Pro: TranspilaciÃ³n JSX en tiempo real
+            react: `// Editor Pro: Transpilación JSX en tiempo real
 import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
@@ -539,7 +539,7 @@ function App() {
 const root = createRoot(document.getElementById('root'));
 root.render(<App />);`,
 
-            python: `# Â¡Python ejecutÃ¡ndose vÃ­a WebAssembly!
+            python: `# ¡Python ejecutándose vía WebAssembly!
 import math
 import sys
 
@@ -547,15 +547,15 @@ def calcular_area_circulo(radio):
     area = math.pi * (radio ** 2)
     return area
 
-print("ðŸš€ Iniciando cÃ¡lculo matemÃ¡tico...")
+print("🚀 Iniciando cálculo matemático...")
 
 radios = [5, 10, 15]
 
 for r in radios:
     area = calcular_area_circulo(r)
-    print(f"Radio: {r} -> Ãrea: {area:.2f}")
+    print(f"Radio: {r} -> Área: {area:.2f}")
 
-print("\\nâœ… EjecuciÃ³n finalizada. (Usa Ctrl+Enter para re-ejecutar)")`
+print("\\n✅ Ejecución finalizada. (Usa Ctrl+Enter para re-ejecutar)")`
         };
 
         function initEditor() {
@@ -573,7 +573,7 @@ print("\\nâœ… EjecuciÃ³n finalizada. (Usa Ctrl+Enter para re-ejecutar)")`
             // Tracking the cursor position
             editor.on('cursorActivity', () => {
                 const pos = editor.getCursor();
-                posIndicator.textContent = `LÃ­nea ${pos.line + 1}, Col ${pos.ch + 1}`;
+                posIndicator.textContent = `Línea ${pos.line + 1}, Col ${pos.ch + 1}`;
             });
 
             // Autoguardado silencioso
@@ -621,7 +621,7 @@ print("\\nâœ… EjecuciÃ³n finalizada. (Usa Ctrl+Enter para re-ejecutar)")`
             toastTimeout = setTimeout(() => toast.classList.remove('show'), 3000);
         }
 
-        // 2. Formatear CÃ³digo
+        // 2. Formatear Código
         function formatCode() {
             const totalLines = editor.lineCount();
             editor.operation(() => {
@@ -629,7 +629,7 @@ print("\\nâœ… EjecuciÃ³n finalizada. (Usa Ctrl+Enter para re-ejecutar)")`
                     editor.indentLine(i, "smart");
                 }
             });
-            showToast("CÃ³digo formateado automÃ¡ticamente");
+            showToast("Código formateado automáticamente");
         }
 
         // 3. Copiar al portapapeles
@@ -640,7 +640,7 @@ print("\\nâœ… EjecuciÃ³n finalizada. (Usa Ctrl+Enter para re-ejecutar)")`
             textarea.select();
             document.execCommand('copy');
             document.body.removeChild(textarea);
-            showToast("CÃ³digo copiado al portapapeles");
+            showToast("Código copiado al portapapeles");
         }
 
         // 4. Descargar archivo local
@@ -660,7 +660,7 @@ print("\\nâœ… EjecuciÃ³n finalizada. (Usa Ctrl+Enter para re-ejecutar)")`
             showToast(`Archivo descargado: mi_proyecto.${ext}`);
         }
 
-        // 5. LÃ³gica del Panel Redimensionable
+        // 5. Lógica del Panel Redimensionable
         function setupResizer() {
             const resizer = document.getElementById('resizer');
             const editorPanel = document.getElementById('editorPanel');
@@ -676,7 +676,7 @@ print("\\nâœ… EjecuciÃ³n finalizada. (Usa Ctrl+Enter para re-ejecutar)")`
             window.addEventListener('mousemove', function(e) {
                 if (!isDragging) return;
                 
-                // Si estamos en mÃ³vil, la barra es horizontal
+                // Si estamos en móvil, la barra es horizontal
                 if (window.innerWidth <= 768) return; 
 
                 const containerOffset = document.querySelector('.workspace').offsetLeft;
@@ -720,7 +720,7 @@ print("\\nâœ… EjecuciÃ³n finalizada. (Usa Ctrl+Enter para re-ejecutar)")`
         }
 
         function resetEditor() {
-            if(confirm("Â¿Borrar tu cÃ³digo y cargar la plantilla inicial?")) {
+            if(confirm("¿Borrar tu código y cargar la plantilla inicial?")) {
                 editor.setValue(templates[langSelect.value]);
                 runCode();
                 showToast("Editor restaurado");
@@ -733,7 +733,7 @@ print("\\nâœ… EjecuciÃ³n finalizada. (Usa Ctrl+Enter para re-ejecutar)")`
             runCode();
         });
 
-        // Motor Pyodide AsÃ­ncrono
+        // Motor Pyodide Asíncrono
         async function runPythonCode(code) {
             runBtn.classList.add('loading');
             termOutput.textContent = "Cargando motor Pyodide... (Esto puede tardar un momento la primera vez)";
@@ -761,17 +761,17 @@ print("\\nâœ… EjecuciÃ³n finalizada. (Usa Ctrl+Enter para re-ejecutar)")`
                 termOutput.textContent = stdout;
                 if(stderr) termOutput.textContent += "\nError:\n" + stderr;
                 
-                showToast("Python ejecutado con Ã©xito");
+                showToast("Python ejecutado con éxito");
 
             } catch (err) {
                 termOutput.textContent = `Error:\n${err}`;
-                showToast("Error en cÃ³digo Python", "error");
+                showToast("Error en código Python", "error");
             } finally {
                 runBtn.classList.remove('loading');
             }
         }
 
-        // Motor Principal de EjecuciÃ³n
+        // Motor Principal de Ejecución
         function runCode() {
             const code = editor.getValue();
             const lang = langSelect.value;
@@ -809,7 +809,7 @@ print("\\nâœ… EjecuciÃ³n finalizada. (Usa Ctrl+Enter para re-ejecutar)")`
             }
             
             doc.close();
-            showToast("CÃ³digo compilado y renderizado");
+            showToast("Código compilado y renderizado");
         }
 
         // Evento Global de Teclado para guardar preventivo si el editor no tiene el foco
@@ -820,7 +820,7 @@ print("\\nâœ… EjecuciÃ³n finalizada. (Usa Ctrl+Enter para re-ejecutar)")`
             }
         });
 
-        // Iniciar la aplicaciÃ³n
+        // Iniciar la aplicación
         window.onload = initEditor;
 
     </script>
